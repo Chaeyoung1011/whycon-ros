@@ -21,6 +21,8 @@
 #include <whycode_interfaces/msg/marker.hpp>
 
 #include "whycon/whycon.h"
+#include <tf2_ros/transform_broadcaster.h>
+
 
 
 namespace whycode_ros2
@@ -70,7 +72,8 @@ class CWhyconROSNode : public rclcpp::Node
         rclcpp::Service<whycode_interfaces::srv::SetCalibMethod>::SharedPtr calib_method_srv_;
         rclcpp::Service<whycode_interfaces::srv::SetCalibPath>::SharedPtr   calib_path_srv_;
         rclcpp::Service<whycode_interfaces::srv::SelectMarker>::SharedPtr   select_marker_srv_;
-
+        
+        std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
 
 
         bool draw_coords_;
@@ -87,6 +90,10 @@ class CWhyconROSNode : public rclcpp::Node
         bool identify_;
         int num_markers_;
         int min_size_;
+        
+        std::map<int, geometry_msgs::msg::Vector3> last_positions_;
+        const double position_threshold_ = 0.3;  // 튐 허용 거리 (m)
+
 };
 
 }  // namespace whycode_ros2

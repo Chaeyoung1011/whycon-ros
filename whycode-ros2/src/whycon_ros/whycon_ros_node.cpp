@@ -4,6 +4,9 @@
 #include <memory>
 #include <string>
 #include <algorithm>
+#include <tf2_ros/transform_broadcaster.h>
+#include <geometry_msgs/msg/transform_stamped.hpp>
+
 
 using std::placeholders::_1;
 using std::placeholders::_2;
@@ -161,19 +164,50 @@ void CWhyconROSNode::imageCallback(const sensor_msgs::msg::Image::ConstSharedPtr
     marker_array.header.stamp = msg->header.stamp;
     marker_array.header.frame_id = msg->header.frame_id;
 
-    for(const whycon::SMarker &detection : whycon_detections_)
+    for (const whycon::SMarker &detection : whycon_detections_)
+{
+    int marker_id = detection.seg.ID;
+    double x = detection.obj.x;
+    double y = detection.obj.y;
+    double z = detection.obj.z;
+
+    // 필터링: 이전 위치와 비교
+    bool publish = true;
+    auto it = last_positions_.find(marker_id);
+    if (it != last_positions_.end())
+    {
+        double dx = x - it->second.x;
+        double dy = y - it->second.y;
+        double dz = z - it->second.z;
+        double dist = std::sqrt(dx*dx + dy*dy + dz*dz);
+        if (dist > position_threshold_)
+        {
+            RCLCPP_WARN(this->get_logger(), "Marker %d position jump filtered: Δ=%.2f", marker_id, dist);
+            publish = false;
+        }
+    }
+
+    // 항상 최신 위치는 저장
+    geometry_msgs::msg::Vector3 current_position;
+    current_position.x = x;
+    current_position.y = y;
+    current_position.z = z;
+    last_positions_[marker_id] = current_position;
+
+    // TF 및 marker 메시지 퍼블리시
+    if (publish)
     {
         whycode_interfaces::msg::Marker marker;
 
-        marker.id = detection.seg.ID;
+        marker.id = marker_id;
         marker.size = detection.seg.size;
         marker.u = detection.seg.x;
         marker.v = detection.seg.y;
         marker.angle = detection.obj.angle;
 
-        marker.position.position.x = detection.obj.x;
-        marker.position.position.y = detection.obj.y;
-        marker.position.position.z = detection.obj.z;
+        marker.position.position.x = x;
+        marker.position.position.y = y;
+        marker.position.position.z = z;
         marker.position.orientation.x = detection.obj.qx;
         marker.position.orientation.y = detection.obj.qy;
         marker.position.orientation.z = detection.obj.qz;
@@ -181,8 +215,24 @@ void CWhyconROSNode::imageCallback(const sensor_msgs::msg::Image::ConstSharedPtr
         marker.rotation.x = detection.obj.roll;
         marker.rotation.y = detection.obj.pitch;
         marker.rotation.z = detection.obj.yaw;
+
         marker_array.markers.push_back(marker);
+
+        geometry_msgs::msg::TransformStamped tf_msg;
+        tf_msg.header.stamp = msg->header.stamp;
+        tf_msg.header.frame_id = "camera";
+        tf_msg.child_frame_id = "whycode_marker_" + std::to_string(marker_id);
+        tf_msg.transform.translation.x = x;
+        tf_msg.transform.translation.y = y;
+        tf_msg.transform.translation.z = z;
+        tf_msg.transform.rotation.x = detection.obj.qx;
+        tf_msg.transform.rotation.y = detection.obj.qy;
+        tf_msg.transform.rotation.z = detection.obj.qz;
+        tf_msg.transform.rotation.w = detection.obj.qw;
+        tf_broadcaster_->sendTransform(tf_msg);
     }
+}
+
 
     if(marker_array.markers.size() > 0)
     {
@@ -268,7 +318,8 @@ CWhyconROSNode::CWhyconROSNode() :
     calib_method_srv_ = this->create_service<whycode_interfaces::srv::SetCalibMethod>("~/set_calib_method", std::bind(&CWhyconROSNode::setCalibMethodCallback, this, _1, _2));
     calib_path_srv_ = this->create_service<whycode_interfaces::srv::SetCalibPath>("~/set_calib_path", std::bind(&CWhyconROSNode::setCalibPathCallback, this, _1, _2));
     select_marker_srv_ = this->create_service<whycode_interfaces::srv::SelectMarker>("~/select_marker", std::bind(&CWhyconROSNode::selectMarkerCallback, this, _1, _2));
-
+    
+    tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(this);
 
 
     identify_ = true;

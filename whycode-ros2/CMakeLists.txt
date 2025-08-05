@@ -24,7 +24,7 @@ find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(image_transport REQUIRED)
 find_package(whycode_interfaces REQUIRED)
-
+find_package(tf2_ros REQUIRED)
 find_package(OpenCV REQUIRED)
 
 ###########
@@ -43,7 +43,7 @@ add_executable(whycode_node
     src/whycon/CNecklace.cpp
     )
 
-ament_target_dependencies(whycode_node rclcpp std_msgs sensor_msgs geometry_msgs image_transport whycode_interfaces OpenCV)
+ament_target_dependencies(whycode_node rclcpp std_msgs sensor_msgs geometry_msgs image_transport whycode_interfaces OpenCV tf2_ros)
 
 #############
 ## Install ##
