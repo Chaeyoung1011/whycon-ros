@@ -24,7 +24,6 @@
 #include <tf2_ros/transform_broadcaster.h>
 
 
-
 namespace whycode_ros2
 {
 
@@ -90,10 +89,24 @@ class CWhyconROSNode : public rclcpp::Node
         bool identify_;
         int num_markers_;
         int min_size_;
-        
-        std::map<int, geometry_msgs::msg::Vector3> last_positions_;
+	
+	std::map<int, geometry_msgs::msg::Vector3> last_positions_;
         const double position_threshold_ = 0.3;  // 튐 허용 거리 (m)
+        
+        // 추가: 마지막 회전값(Euler) 보관. 필요하면 pitch, yaw도 같이 씀
+        std::map<int, geometry_msgs::msg::Vector3> last_rotations_;
 
+        // 이 부분이 roll 필터 
+        const double roll_threshold_rad_ = M_PI / 1.5 ;
+
+        // (선택) 유틸: -π~+π로 래핑 & 최단 각 차이
+        static inline double wrapToPi(double a) {
+            return std::atan2(std::sin(a), std::cos(a));
+        }
+        static inline double shortestAngleDiff(double a, double b) {
+            // a와 b의 최단 각도 차이를 [-π, π]에서 반환
+            return wrapToPi(a - b);
+        }	
 };
 
 }  // namespace whycode_ros2

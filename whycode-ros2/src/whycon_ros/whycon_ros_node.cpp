@@ -1,15 +1,20 @@
 #include "whycon_ros/whycon_ros_node.h"
-
+#include <cmath>
 #include <functional>
 #include <memory>
 #include <string>
 #include <algorithm>
 #include <tf2_ros/transform_broadcaster.h>
 #include <geometry_msgs/msg/transform_stamped.hpp>
-
+#include <tf2/LinearMath/Quaternion.h>   //Add
 
 using std::placeholders::_1;
 using std::placeholders::_2;
+
+namespace {
+inline double wrapToPi(double a) { return std::atan2(std::sin(a), std::cos(a)); }
+inline double shortestAngleDiff(double a, double b) { return wrapToPi(a - b); }
+}
 
 namespace whycode_ros2
 {
@@ -24,7 +29,7 @@ void CWhyconROSNode::getGuiSettingsCallback(const std::shared_ptr<whycode_interf
 }
 
 void CWhyconROSNode::setDrawingCallback(const std::shared_ptr<whycode_interfaces::srv::SetDrawing::Request> req,
-                                              std::shared_ptr<whycode_interfaces::srv::SetDrawing::Response> res)
+                                        std::shared_ptr<whycode_interfaces::srv::SetDrawing::Response> res)
 {
     RCLCPP_INFO(this->get_logger(), "setDrawingCallback coords %d segs %d", req->draw_coords, req->draw_segments);
     whycon_.setDrawing(req->draw_coords, req->draw_segments);
@@ -164,7 +169,7 @@ void CWhyconROSNode::imageCallback(const sensor_msgs::msg::Image::ConstSharedPtr
     marker_array.header.stamp = msg->header.stamp;
     marker_array.header.frame_id = msg->header.frame_id;
 
-    for (const whycon::SMarker &detection : whycon_detections_)
+    for(const whycon::SMarker &detection : whycon_detections_)
 {
     int marker_id = detection.seg.ID;
     double x = detection.obj.x;
@@ -193,6 +198,42 @@ void CWhyconROSNode::imageCallback(const sensor_msgs::msg::Image::ConstSharedPtr
     current_position.y = y;
     current_position.z = z;
     last_positions_[marker_id] = current_position;
+    
+    // ===== [추가] 회전 튐 필터 (roll만 우선) =====
+    // detection.obj.roll/pitch/yaw 는 라디안
+    double roll  = detection.obj.roll;
+    double pitch = detection.obj.pitch;
+    double yaw   = detection.obj.yaw;
+    
+    auto it_rot = last_rotations_.find(marker_id);
+    if (it_rot != last_rotations_.end())
+    {
+        double droll = std::abs(shortestAngleDiff(roll, it_rot->second.x));
+        if (droll > roll_threshold_rad_)
+        {
+            // 프레임 드롭 대신 "이번 프레임은 이전 roll로 고정" (시각적으로 더 안정적)
+            RCLCPP_WARN(this->get_logger(),
+                        "Marker %d roll jump filtered: Δ=%.1f° -> using last roll",
+                        marker_id, droll * 180.0 / M_PI);
+            roll = it_rot->second.x;
+        }
+        // 원하면 pitch/yaw도 동일 로직으로 보호 가능
+        // double dp = std::abs(shortestAngleDiff(pitch, it_rot->second.y));
+        // double dy = std::abs(shortestAngleDiff(yaw,   it_rot->second.z));
+        // if (dp > pitch_threshold_rad_) pitch = it_rot->second.y;
+        // if (dy > yaw_threshold_rad_)   yaw   = it_rot->second.z;
+    }
+    
+    tf2::Quaternion q;
+    q.setRPY(roll, pitch, yaw);
+    double qx = q.x(), qy = q.y(), qz = q.z(), qw = q.w();
+
+    // 마지막 회전값 갱신 (항상)
+    geometry_msgs::msg::Vector3 last_rot_vec;
+    last_rot_vec.x = roll;
+    last_rot_vec.y = pitch;
+    last_rot_vec.z = yaw;
+    last_rotations_[marker_id] = last_rot_vec;
 
     // TF 및 marker 메시지 퍼블리시
     if (publish)
@@ -208,13 +249,16 @@ void CWhyconROSNode::imageCallback(const sensor_msgs::msg::Image::ConstSharedPtr
         marker.position.position.x = x;
         marker.position.position.y = y;
         marker.position.position.z = z;
-        marker.position.orientation.x = detection.obj.qx;
-        marker.position.orientation.y = detection.obj.qy;
-        marker.position.orientation.z = detection.obj.qz;
-        marker.position.orientation.w = detection.obj.qw;
-        marker.rotation.x = detection.obj.roll;
-        marker.rotation.y = detection.obj.pitch;
-        marker.rotation.z = detection.obj.yaw;
+        marker.position.orientation.x = qx;
+        marker.position.orientation.y = qy;
+        marker.position.orientation.z = qz;
+        marker.position.orientation.w = qw;
+        //marker.rotation.x = detection.obj.roll;
+	//marker.rotation.y = detection.obj.pitch;
+	//marker.rotation.z = detection.obj.yaw;
+	marker.rotation.x = roll;
+        marker.rotation.y = pitch;
+        marker.rotation.z = yaw;
 
         marker_array.markers.push_back(marker);
 
@@ -225,10 +269,14 @@ void CWhyconROSNode::imageCallback(const sensor_msgs::msg::Image::ConstSharedPtr
         tf_msg.transform.translation.x = x;
         tf_msg.transform.translation.y = y;
         tf_msg.transform.translation.z = z;
-        tf_msg.transform.rotation.x = detection.obj.qx;
-        tf_msg.transform.rotation.y = detection.obj.qy;
-        tf_msg.transform.rotation.z = detection.obj.qz;
-        tf_msg.transform.rotation.w = detection.obj.qw;
+        //tf_msg.transform.rotation.x = detection.obj.qx;
+        //tf_msg.transform.rotation.y = detection.obj.qy;
+        //tf_msg.transform.rotation.z = detection.obj.qz;
+        //tf_msg.transform.rotation.w = detection.obj.qw;
+        tf_msg.transform.rotation.x = qx;
+        tf_msg.transform.rotation.y = qy;
+        tf_msg.transform.rotation.z = qz;
+        tf_msg.transform.rotation.w = qw;
         tf_broadcaster_->sendTransform(tf_msg);
     }
 }
